@@ -1,0 +1,277 @@
+import openai
+import schedule
+import time
+import json
+import requests
+from datetime import datetime, timedelta
+import random
+from dataclasses import dataclass
+from typing import List, Dict, Optional
+import os
+from pathlib import Path
+
+# Configuration
+@dataclass
+class SocialMediaConfig:
+    openai_api_key: str
+    linkedin_access_token: str
+    instagram_access_token: str
+    twitter_api_key: str
+    twitter_api_secret: str
+    twitter_access_token: str
+    twitter_access_token_secret: str
+    brand_voice: str = "professional, helpful, inspiring"
+    company_name: str = "On The Line"
+    industry: str = "Digital Marketing"
+    target_audience: str = "startups and entrepreneurs"
+
+class ContentGenerator:
+    def __init__(self, config: SocialMediaConfig):
+        self.config = config
+        openai.api_key = config.openai_api_key
+        self.content_types = [
+            "tip", "case_study", "behind_the_scenes", "industry_news", 
+            "motivational", "educational", "client_spotlight", "tool_recommendation"
+        ]
+        self.platforms = ["linkedin", "instagram", "twitter"]
+        
+    def generate_content_ideas(self) -> List[Dict]:
+        """Generate content ideas using AI"""
+        prompt = f"""
+        You are a social media content creator for {self.config.company_name}, a digital marketing agency.
+        
+        Generate 7 unique social media content ideas for the week. Each idea should be different and engaging.
+        
+        Our services: Web development, social media management, email marketing, landing pages, online courses
+        Target audience: {self.config.target_audience}
+        Brand voice: {self.config.brand_voice}
+        
+        For each idea, provide:
+        1. Content type (tip, case study, behind the scenes, etc.)
+        2. Platform (LinkedIn, Instagram, Twitter)
+        3. Main topic
+        4. Hook/headline
+        5. Key points to cover
+        
+        Format as JSON array with objects containing: type, platform, topic, hook, key_points
+        """
+        
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=1500
+            )
+            
+            content = response.choices[0].message.content
+            ideas = json.loads(content)
+            return ideas
+        except Exception as e:
+            print(f"Error generating content ideas: {e}")
+            return self._fallback_ideas()
+    
+    def _fallback_ideas(self) -> List[Dict]:
+        return [
+            {
+                "type": "tip",
+                "platform": "linkedin",
+                "topic": "Social Media Strategy",
+                "hook": "3 Social Media Mistakes That Are Costing You Customers",
+                "key_points": ["Inconsistent posting", "No clear CTA", "Ignoring analytics"]
+            },
+            {
+                "type": "motivational",
+                "platform": "instagram",
+                "topic": "Entrepreneurship",
+                "hook": "Your startup doesn't need perfection, it needs action",
+                "key_points": ["Start before you're ready", "Iterate based on feedback", "Progress over perfection"]
+            }
+        ]
+    
+    def create_post_content(self, idea: Dict) -> Dict:
+        platform = idea['platform']
+        platform_specs = {
+            "linkedin": {
+                "length": "300-500 words",
+                "style": "professional, thought leadership",
+                "format": "engaging hook + valuable insights + call to action"
+            },
+            "instagram": {
+                "length": "150-300 words",
+                "style": "visual, inspirational, casual",
+                "format": "compelling caption + relevant hashtags"
+            },
+            "twitter": {
+                "length": "240 characters max",
+                "style": "concise, engaging, conversational",
+                "format": "hook + value + hashtags"
+            }
+        }
+        spec = platform_specs[platform]
+        prompt = f"""
+        Create a {platform} post for {self.config.company_name} based on this idea:
+        
+        Topic: {idea['topic']}
+        Hook: {idea['hook']}
+        Key Points: {', '.join(idea['key_points'])}
+        
+        Requirements:
+        - Length: {spec['length']}
+        - Style: {spec['style']}
+        - Format: {spec['format']}
+        - Brand voice: {self.config.brand_voice}
+        - Include relevant hashtags
+        - End with a call-to-action
+        
+        Make it engaging and valuable for {self.config.target_audience}.
+        """
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=800
+            )
+            content = response.choices[0].message.content
+            return {
+                "platform": platform,
+                "content": content,
+                "idea": idea,
+                "created_at": datetime.now().isoformat(),
+                "status": "draft"
+            }
+        except Exception as e:
+            print(f"Error creating post content: {e}")
+            return None
+
+class SocialMediaPoster:
+    def __init__(self, config: SocialMediaConfig):
+        self.config = config
+    
+    def post_to_linkedin(self, content: str) -> bool:
+        url = "https://api.linkedin.com/v2/ugcPosts"
+        headers = {
+            "Authorization": f"Bearer {self.config.linkedin_access_token}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "author": "urn:li:person:YOUR_PERSON_ID",  # Replace with actual person ID
+            "lifecycleState": "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary": {
+                        "text": content
+                    },
+                    "shareMediaCategory": "NONE"
+                }
+            },
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+            }
+        }
+        try:
+            response = requests.post(url, headers=headers, json=data)
+            return response.status_code == 201
+        except Exception as e:
+            print(f"Error posting to LinkedIn: {e}")
+            return False
+    
+    def post_to_instagram(self, content: str, image_url: Optional[str] = None) -> bool:
+        # Instagram posting requires Facebook Graph API and setup
+        pass
+    
+    def post_to_twitter(self, content: str) -> bool:
+        url = "https://api.twitter.com/2/tweets"
+        headers = {
+            "Authorization": f"Bearer {self.config.twitter_access_token}",
+            "Content-Type": "application/json"
+        }
+        data = {"text": content}
+        try:
+            response = requests.post(url, headers=headers, json=data)
+            return response.status_code == 201
+        except Exception as e:
+            print(f"Error posting to Twitter: {e}")
+            return False
+
+class ContentScheduler:
+    def __init__(self, config: SocialMediaConfig):
+        self.config = config
+        self.generator = ContentGenerator(config)
+        self.poster = SocialMediaPoster(config)
+        self.content_queue = []
+        self.content_file = "content_queue.json"
+        
+    def load_content_queue(self):
+        if Path(self.content_file).exists():
+            with open(self.content_file, 'r') as f:
+                self.content_queue = json.load(f)
+    
+    def save_content_queue(self):
+        with open(self.content_file, 'w') as f:
+            json.dump(self.content_queue, f, indent=2)
+    
+    def generate_weekly_content(self):
+        print("Generating weekly content...")
+        ideas = self.generator.generate_content_ideas()
+        for idea in ideas:
+            post = self.generator.create_post_content(idea)
+            if post:
+                self.content_queue.append(post)
+        self.save_content_queue()
+        print(f"Generated {len(ideas)} posts for the week")
+    
+    def post_daily_content(self):
+        if not self.content_queue:
+            print("No content in queue. Generating new content...")
+            self.generate_weekly_content()
+            return
+        today_posts = [post for post in self.content_queue if post['status'] == 'draft']
+        if not today_posts:
+            print("No draft posts available")
+            return
+        post = today_posts[0]
+        platform = post['platform']
+        content = post['content']
+        success = False
+        if platform == 'linkedin':
+            success = self.poster.post_to_linkedin(content)
+        elif platform == 'twitter':
+            success = self.poster.post_to_twitter(content)
+        elif platform == 'instagram':
+            success = self.poster.post_to_instagram(content)
+        if success:
+            post['status'] = 'posted'
+            post['posted_at'] = datetime.now().isoformat()
+            print(f"Successfully posted to {platform}")
+        else:
+            print(f"Failed to post to {platform}")
+        self.save_content_queue()
+    
+    def start_scheduler(self):
+        print("Starting Social Media AI Agent for On The Line...")
+        schedule.every().sunday.at("09:00").do(self.generate_weekly_content)
+        schedule.every().day.at("10:00").do(self.post_daily_content)
+        schedule.every().day.at("15:00").do(self.post_daily_content)
+        schedule.every().day.at("18:00").do(self.post_daily_content)
+        self.load_content_queue()
+        while True:
+            schedule.run_pending()
+            time.sleep(60)
+
+def main():
+    config = SocialMediaConfig(
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        linkedin_access_token=os.getenv("LINKEDIN_ACCESS_TOKEN"),
+        instagram_access_token=os.getenv("INSTAGRAM_ACCESS_TOKEN"),
+        twitter_api_key=os.getenv("TWITTER_API_KEY"),
+        twitter_api_secret=os.getenv("TWITTER_API_SECRET"),
+        twitter_access_token=os.getenv("TWITTER_ACCESS_TOKEN"),
+        twitter_access_token_secret=os.getenv("TWITTER_ACCESS_TOKEN_SECRET")
+    )
+    scheduler = ContentScheduler(config)
+    scheduler.start_scheduler()
+
+if __name__ == "__main__":
+    main()
